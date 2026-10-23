@@ -128,6 +128,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private View btnInputs;
     private TextView btnWifi;
     private TextView shamsiDate;
+    // JAKIM prayer times for Sepang / SGR01.
+    private View prayerPanel;
+    private TextView prayerTimes;
+    private volatile boolean prayerRefreshRunning;
     private boolean shamsi;
     private String vpnApp;
     private SpringAnimation springX, springY;
@@ -232,6 +236,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void run() {
             updateShamsiDate();
             updateWifiLabel();
+            showPrayerTimes(PrayerTimes.cachedToday(MainActivity.this));
             refreshPlacesIfDue();
             handler.postDelayed(this, MINUTE_MS);
         }
@@ -292,6 +297,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnWifi = findViewById(R.id.btnWifi);
         if (!cfg.showNetworkPill) btnWifi.setVisibility(View.GONE);
         shamsiDate = findViewById(R.id.shamsiDate);
+        prayerPanel = findViewById(R.id.prayerPanel);
+        prayerTimes = findViewById(R.id.prayerTimes);
         shamsi = cfg.shamsiDate;
         if (shamsi) {
             shamsiDate.setVisibility(View.VISIBLE);
@@ -671,7 +678,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         updateShamsiDate();
         updateWifiLabel();
         updateInputsButton();
+        updatePrayerTimes();
         startWallpaperRotation();
+        handler.removeCallbacks(minuteTick);
         handler.postDelayed(minuteTick, MINUTE_MS);
         handler.removeCallbacks(cacheClean);
         handler.postDelayed(cacheClean, CacheCleaner.IDLE_MS);
@@ -1457,6 +1466,54 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     // ---- top bar ---------------------------------------------------------------------------------
+
+    // ---- JAKIM prayer times ----------------------------------------------------------------------
+
+    private void updatePrayerTimes() {
+        PrayerTimes.Today cached = PrayerTimes.cachedToday(this);
+        showPrayerTimes(cached);
+
+        if (prayerRefreshRunning) return;
+        prayerRefreshRunning = true;
+
+        new Thread(() -> {
+            PrayerTimes.Today fresh = null;
+            try {
+                fresh = PrayerTimes.refresh(getApplicationContext());
+            } catch (Exception e) {
+                android.util.Log.w("TvHomePrayer", "Could not refresh prayer times: " + e);
+            }
+
+            final PrayerTimes.Today result = fresh;
+            handler.post(() -> {
+                prayerRefreshRunning = false;
+                if (isDestroyed()) return;
+                showPrayerTimes(result != null ? result : PrayerTimes.cachedToday(MainActivity.this));
+            });
+        }, "jakim-prayer-times").start();
+    }
+
+    private void showPrayerTimes(PrayerTimes.Today t) {
+        if (prayerPanel == null || prayerTimes == null) return;
+        if (t == null) {
+            prayerPanel.setVisibility(View.GONE);
+            return;
+        }
+
+        String[] names = {"SUBUH", "SYURUK", "ZOHOR", "ASAR", "MAGHRIB", "ISYAK"};
+        long[] values = {t.fajr, t.syuruk, t.dhuhr, t.asr, t.maghrib, t.isha};
+        int next = PrayerTimes.nextIndex(t);
+        StringBuilder line = new StringBuilder();
+
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0) line.append("   ");
+            if (i == next) line.append("• ");
+            line.append(names[i]).append(' ').append(PrayerTimes.time(values[i]));
+        }
+
+        prayerTimes.setText(line.toString());
+        prayerPanel.setVisibility(View.VISIBLE);
+    }
 
     private void updateShamsiDate() {
         if (shamsi) shamsiDate.setText(Shamsi.today());
